@@ -6,33 +6,55 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// Serve static files (HTML, CSS, JS)
+// Keep track of rooms and their peers
+const rooms = new Map();
+
 app.use(express.static('public'));
 
-// Socket.io connection handler
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // Join a room
     socket.on('join', (roomId) => {
         socket.join(roomId);
-        console.log(`User ${socket.id} joined room ${roomId}`);
+        
+        // Initialize room if it doesn't exist
+        if (!rooms.has(roomId)) {
+            rooms.set(roomId, new Set());
+        }
+        
+        const room = rooms.get(roomId);
+        room.add(socket.id);
+
+        // Assign roles based on join order
+        if (room.size === 1) {
+            socket.emit('role', 'initiator');
+        } else {
+            socket.emit('role', 'receiver');
+        }
+
+        console.log(`User ${socket.id} joined room ${roomId} (${room.size} peers)`);
     });
 
-    // Relay signaling data to others in the same room
     socket.on('signal', (data) => {
         const { roomId, signalData } = data;
-        socket.to(roomId).emit('signal', signalData); // Broadcast to other peers in the room
+        socket.to(roomId).emit('signal', signalData);
     });
 
-    // Handle user disconnect
     socket.on('disconnect', () => {
+        // Clean up rooms
+        for (const [roomId, peers] of rooms.entries()) {
+            if (peers.has(socket.id)) {
+                peers.delete(socket.id);
+                if (peers.size === 0) {
+                    rooms.delete(roomId);
+                }
+            }
+        }
         console.log('User disconnected:', socket.id);
     });
 });
 
-// Start the server
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Signaling server running on http://localhost:${PORT}`);
+    console.log(`Signaling server running on port ${PORT}`);
 });
