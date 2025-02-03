@@ -27,8 +27,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log('Sending ICE candidate', event.candidate);
-                socket.emit('signal', { type: 'candidate', candidate: event.candidate });
+                console.log('ICE Candidate:', event.candidate.candidate);
+                console.log('ICE Candidate Type:', event.candidate.type || 'unknown');
+            } else {
+                console.log('All ICE candidates sent');
             }
         };
 
