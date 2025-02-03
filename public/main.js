@@ -15,7 +15,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Automatically join the "default-room"
     console.log('Joining the default room');
 
-    // Handle signaling data from the server
     socket.on('signal', (data) => {
         if (data.type === 'offer') {
             handleOffer(data.offer);
@@ -26,7 +25,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Handle role assignment (initiator or receiver)
     socket.on('role', (role) => {
         console.log(`Received role: ${role}`);
         if (role === 'initiator') {
@@ -38,11 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Create a new RTCPeerConnection
     function createPeerConnection() {
         peerConnection = new RTCPeerConnection(configuration);
 
-        // Handle incoming ICE candidates
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
                 console.log('Sending ICE candidate');
@@ -50,22 +46,24 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
 
-        // Handle incoming data channel (for receiver)
         peerConnection.ondatachannel = (event) => {
             console.log('Data channel received');
             dataChannel = event.channel;
             setupDataChannel();
         };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+        };
     }
 
-    // Create a data channel (for initiator)
     function createDataChannel() {
         console.log('Creating data channel');
         dataChannel = peerConnection.createDataChannel('chat');
+        console.log('Initial Data Channel State:', dataChannel.readyState);
         setupDataChannel();
     }
 
-    // Set up data channel event handlers
     function setupDataChannel() {
         dataChannel.onmessage = (event) => {
             console.log('Message received:', event.data);
@@ -74,14 +72,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
         dataChannel.onopen = () => {
             console.log('Data channel is open!');
+            messageInput.disabled = false; // Enable the input field
         };
 
         dataChannel.onclose = () => {
             console.log('Data channel closed');
+            messageInput.disabled = true; // Disable the input field
+        };
+
+        dataChannel.onerror = (error) => {
+            console.error('Data channel error:', error);
         };
     }
 
-    // Handle incoming offer
     async function handleOffer(offer) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await peerConnection.createAnswer();
@@ -89,17 +92,14 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('signal', { type: 'answer', answer: answer });
     }
 
-    // Handle incoming answer
     async function handleAnswer(answer) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     }
 
-    // Handle incoming ICE candidate
     async function handleCandidate(candidate) {
         await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
     }
 
-    // Start the call by creating an offer
     async function startCall() {
         console.log('Starting call');
         const offer = await peerConnection.createOffer();
@@ -107,7 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
         socket.emit('signal', { type: 'offer', offer: offer });
     }
 
-    // Send a message when Enter is pressed
     messageInput.addEventListener('keypress', (event) => {
         if (event.key === 'Enter') {
             const message = messageInput.value;
@@ -116,12 +115,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendMessage(`You: ${message}`);
                 messageInput.value = ''; // Clear the input field
             } else {
-                console.error('Data channel is not open');
+                console.error('Data channel is not open. Current state:', dataChannel?.readyState);
             }
         }
     });
 
-    // Append a message to the chat window
     function appendMessage(message) {
         const messageElement = document.createElement('div');
         messageElement.textContent = message;
