@@ -10,8 +10,8 @@ const configuration = {
 const peerConnection = new RTCPeerConnection(configuration);
 let dataChannel;
 
-// Generate a unique room ID or ask the user to provide one
-const roomId = new URLSearchParams(window.location.search).get('room') || 'default-room'; // Default room if none provided
+// Generate a unique room ID or use a default room
+const roomId = new URLSearchParams(window.location.search).get('room') || 'default-room';
 socket.emit('join', roomId); // Join the room
 
 // Create a data channel
@@ -24,6 +24,14 @@ function createDataChannel() {
 
     dataChannel.onmessage = (event) => {
         appendMessage(`Peer: ${event.data}`);
+    };
+
+    dataChannel.onclose = () => {
+        console.log('Data channel is closed.');
+    };
+
+    dataChannel.onerror = (error) => {
+        console.error('Data channel error:', error);
     };
 }
 
@@ -38,10 +46,20 @@ peerConnection.ondatachannel = (event) => {
     channel.onmessage = (event) => {
         appendMessage(`Peer: ${event.data}`);
     };
+
+    channel.onclose = () => {
+        console.log('Data channel is closed.');
+    };
+
+    channel.onerror = (error) => {
+        console.error('Data channel error:', error);
+    };
 };
 
 // Handle signaling data from the server
 socket.on('signal', (data) => {
+    console.log('Signal received:', data);
+
     if (data.type === 'offer') {
         handleOffer(data.offer);
     } else if (data.type === 'answer') {
@@ -53,6 +71,13 @@ socket.on('signal', (data) => {
 
 // Handle incoming offer
 async function handleOffer(offer) {
+    console.log('Received offer:', offer);
+
+    if (peerConnection.signalingState !== 'stable') {
+        console.error('Cannot set remote offer: Connection not in stable state');
+        return;
+    }
+
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
@@ -61,11 +86,19 @@ async function handleOffer(offer) {
 
 // Handle incoming answer
 async function handleAnswer(answer) {
+    console.log('Received answer:', answer);
+
+    if (peerConnection.signalingState !== 'have-local-offer') {
+        console.error('Cannot set remote answer: Connection not in "have-local-offer" state');
+        return;
+    }
+
     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 }
 
 // Handle incoming ICE candidate
 async function handleCandidate(candidate) {
+    console.log('Received ICE candidate:', candidate);
     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
 }
 
@@ -110,3 +143,12 @@ function appendMessage(message) {
     chat.appendChild(messageElement);
     chat.scrollTop = chat.scrollHeight;
 }
+
+// Debugging connection states
+peerConnection.onsignalingstatechange = () => {
+    console.log(`Signaling state: ${peerConnection.signalingState}`);
+};
+
+peerConnection.oniceconnectionstatechange = () => {
+    console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+};
