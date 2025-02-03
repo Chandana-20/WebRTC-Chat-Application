@@ -1,27 +1,25 @@
 const socket = io(); // Connect to the signaling server
-
 const chat = document.getElementById('chat');
 const messageInput = document.getElementById('messageInput');
 
-// Configuration for WebRTC (STUN server)
+// Configuration for WebRTC
 const configuration = {
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
-// Create a new RTCPeerConnection
 const peerConnection = new RTCPeerConnection(configuration);
 let dataChannel;
 
-// Create a data channel for sending messages
+// Generate a unique room ID or ask the user to provide one
+const roomId = new URLSearchParams(window.location.search).get('room') || 'default-room'; // Default room if none provided
+socket.emit('join', roomId); // Join the room
+
+// Create a data channel
 function createDataChannel() {
     dataChannel = peerConnection.createDataChannel('chat');
 
     dataChannel.onopen = () => {
-        console.log('Data channel is open and ready for use!');
-    };
-
-    dataChannel.onclose = () => {
-        console.log('Data channel is closed.');
+        console.log('Data channel is open!');
     };
 
     dataChannel.onmessage = (event) => {
@@ -29,15 +27,15 @@ function createDataChannel() {
     };
 }
 
-// Handle incoming data channel messages
+// Handle incoming data channel
 peerConnection.ondatachannel = (event) => {
-    dataChannel = event.channel;
+    const channel = event.channel;
 
-    dataChannel.onopen = () => {
-        console.log('Data channel is open and ready for use!');
+    channel.onopen = () => {
+        console.log('Data channel is open!');
     };
 
-    dataChannel.onmessage = (event) => {
+    channel.onmessage = (event) => {
         appendMessage(`Peer: ${event.data}`);
     };
 };
@@ -58,7 +56,7 @@ async function handleOffer(offer) {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    socket.emit('signal', { type: 'answer', answer: answer });
+    socket.emit('signal', { roomId, signalData: { type: 'answer', answer } });
 }
 
 // Handle incoming answer
@@ -71,21 +69,21 @@ async function handleCandidate(candidate) {
     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
 }
 
-// Start the call by creating an offer
+// Start the call
 async function startCall() {
-    createDataChannel(); // Ensure the data channel is created before the offer
+    createDataChannel();
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', { type: 'offer', offer: offer });
+    socket.emit('signal', { roomId, signalData: { type: 'offer', offer } });
 }
 
 // Automatically start the call when the page loads
 startCall();
 
-// Listen for ICE candidates and send them to the other peer
+// Listen for ICE candidates and send them to the server
 peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
-        socket.emit('signal', { type: 'candidate', candidate: event.candidate });
+        socket.emit('signal', { roomId, signalData: { type: 'candidate', candidate: event.candidate } });
     }
 };
 
@@ -95,11 +93,11 @@ messageInput.addEventListener('keypress', (event) => {
         const message = messageInput.value;
         if (message) {
             if (dataChannel && dataChannel.readyState === 'open') {
-                dataChannel.send(message); // Send message via WebRTC data channel
+                dataChannel.send(message);
                 appendMessage(`You: ${message}`);
-                messageInput.value = ''; // Clear the input field
+                messageInput.value = '';
             } else {
-                console.error('Data channel is not open. Cannot send message.');
+                console.error('Data channel is not open.');
             }
         }
     }
@@ -110,5 +108,5 @@ function appendMessage(message) {
     const messageElement = document.createElement('div');
     messageElement.textContent = message;
     chat.appendChild(messageElement);
-    chat.scrollTop = chat.scrollHeight; // Auto-scroll to the bottom
+    chat.scrollTop = chat.scrollHeight;
 }

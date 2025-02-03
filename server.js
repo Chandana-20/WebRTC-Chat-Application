@@ -6,16 +6,23 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
 
-// Serve static files (HTML, JS, CSS)
+// Serve static files (HTML, CSS, JS)
 app.use(express.static('public'));
 
 // Socket.io connection handler
 io.on('connection', (socket) => {
-    console.log('A user connected:', socket.id);
+    console.log('User connected:', socket.id);
 
-    // Relay signaling data between users
+    // Join a room
+    socket.on('join', (roomId) => {
+        socket.join(roomId);
+        console.log(`User ${socket.id} joined room ${roomId}`);
+    });
+
+    // Relay signaling data to others in the same room
     socket.on('signal', (data) => {
-        socket.broadcast.emit('signal', data);
+        const { roomId, signalData } = data;
+        socket.to(roomId).emit('signal', signalData); // Broadcast to other peers in the room
     });
 
     // Handle user disconnect
