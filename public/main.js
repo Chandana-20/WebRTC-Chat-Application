@@ -1,6 +1,62 @@
-const socket = io();
+// First add this debug version of main.js
+const socket = io({
+    reconnection: true,
+    reconnectionAttempts: 5,
+    timeout: 10000,
+    transports: ['websocket', 'polling']
+});
+
+// Debug element for visible logging
+const debugLog = document.createElement('div');
+debugLog.style.position = 'fixed';
+debugLog.style.top = '10px';
+debugLog.style.right = '10px';
+debugLog.style.background = 'rgba(0,0,0,0.8)';
+debugLog.style.color = 'white';
+debugLog.style.padding = '10px';
+debugLog.style.borderRadius = '5px';
+debugLog.style.maxHeight = '200px';
+debugLog.style.overflow = 'auto';
+document.body.appendChild(debugLog);
+
+function log(message) {
+    console.log(message);
+    const logEntry = document.createElement('div');
+    logEntry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+    debugLog.appendChild(logEntry);
+    while (debugLog.children.length > 10) {
+        debugLog.removeChild(debugLog.firstChild);
+    }
+}
+
+// Test socket connection
+socket.on('connect', () => {
+    log('Socket connected! ID: ' + socket.id);
+});
+
+socket.on('connect_error', (error) => {
+    log('Socket connection error: ' + error);
+});
+
+socket.on('disconnect', (reason) => {
+    log('Socket disconnected: ' + reason);
+});
+
 const chat = document.getElementById('chat');
 const messageInput = document.getElementById('messageInput');
+
+// Log when elements are found/not found
+if (chat) {
+    log('Chat element found');
+} else {
+    log('Chat element NOT found');
+}
+
+if (messageInput) {
+    log('MessageInput element found');
+} else {
+    log('MessageInput element NOT found');
+}
 
 const configuration = {
     iceServers: [
@@ -9,21 +65,25 @@ const configuration = {
     ]
 };
 
-const peerConnection = new RTCPeerConnection(configuration);
+let peerConnection;
+try {
+    peerConnection = new RTCPeerConnection(configuration);
+    log('RTCPeerConnection created successfully');
+} catch (error) {
+    log('Error creating RTCPeerConnection: ' + error);
+}
+
 let dataChannel = null;
-let isInitiator = false;
-
-// Generate a unique room ID or use a default room
 const roomId = new URLSearchParams(window.location.search).get('room') || 'default-room';
+log('Room ID: ' + roomId);
 
-// Join room and handle role assignment
+// Join room
 socket.emit('join', roomId);
+log('Joining room: ' + roomId);
+
 socket.on('role', (role) => {
-    isInitiator = role === 'initiator';
-    console.log('Role assigned:', role);
-    
-    if (isInitiator) {
-        console.log('Creating data channel as initiator');
+    log('Received role: ' + role);
+    if (role === 'initiator') {
         createDataChannel();
         startCall();
     }
@@ -31,51 +91,42 @@ socket.on('role', (role) => {
 
 function createDataChannel() {
     try {
-        dataChannel = peerConnection.createDataChannel('chat', {
-            ordered: true
-        });
-        console.log('Data channel created:', dataChannel.label);
+        dataChannel = peerConnection.createDataChannel('chat');
+        log('Data channel created');
         setupDataChannelHandlers(dataChannel);
     } catch (error) {
-        console.error('Error creating data channel:', error);
-        appendMessage('System: Error creating data channel');
+        log('Error creating data channel: ' + error);
     }
 }
 
 function setupDataChannelHandlers(channel) {
     channel.onopen = () => {
-        console.log('Data channel is open!');
+        log('Data channel opened');
         messageInput.disabled = false;
-        appendMessage('System: Connected to peer');
-    };
-
-    channel.onmessage = (event) => {
-        console.log('Message received:', event.data);
-        appendMessage(`Peer: ${event.data}`);
+        messageInput.placeholder = 'Type a message...';
     };
 
     channel.onclose = () => {
-        console.log('Data channel is closed');
+        log('Data channel closed');
         messageInput.disabled = true;
-        appendMessage('System: Connection closed');
+        messageInput.placeholder = 'Connection closed...';
     };
 
-    channel.onerror = (error) => {
-        console.error('Data channel error:', error);
-        appendMessage('System: Connection error occurred');
+    channel.onmessage = (event) => {
+        log('Message received: ' + event.data);
+        appendMessage(`Peer: ${event.data}`);
     };
 }
 
-// Handle incoming data channel for non-initiator
 peerConnection.ondatachannel = (event) => {
-    console.log('Received data channel:', event.channel.label);
+    log('Received data channel');
     dataChannel = event.channel;
     setupDataChannelHandlers(dataChannel);
 };
 
 socket.on('signal', async (data) => {
+    log('Signal received: ' + data.type);
     try {
-        console.log('Signal received:', data.type);
         if (data.type === 'offer') {
             await handleOffer(data.offer);
         } else if (data.type === 'answer') {
@@ -84,85 +135,76 @@ socket.on('signal', async (data) => {
             await handleCandidate(data.candidate);
         }
     } catch (error) {
-        console.error('Error handling signal:', error);
+        log('Error handling signal: ' + error);
     }
 });
 
 async function handleOffer(offer) {
+    log('Handling offer');
     try {
-        console.log('Handling offer');
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        await peerConnection.setRemoteDescription(offer);
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
         socket.emit('signal', { roomId, signalData: { type: 'answer', answer } });
     } catch (error) {
-        console.error('Error handling offer:', error);
+        log('Error handling offer: ' + error);
     }
 }
 
 async function handleAnswer(answer) {
+    log('Handling answer');
     try {
-        console.log('Handling answer');
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        await peerConnection.setRemoteDescription(answer);
     } catch (error) {
-        console.error('Error handling answer:', error);
+        log('Error handling answer: ' + error);
     }
 }
 
 async function handleCandidate(candidate) {
+    log('Handling ICE candidate');
     try {
-        if (candidate) {
-            console.log('Adding ICE candidate');
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-        }
+        await peerConnection.addIceCandidate(candidate);
     } catch (error) {
-        console.error('Error handling ICE candidate:', error);
+        log('Error handling candidate: ' + error);
     }
 }
 
 async function startCall() {
+    log('Starting call');
     try {
-        console.log('Starting call');
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         socket.emit('signal', { roomId, signalData: { type: 'offer', offer } });
     } catch (error) {
-        console.error('Error starting call:', error);
+        log('Error starting call: ' + error);
     }
 }
 
 peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
-        console.log('Sending ICE candidate');
+        log('Sending ICE candidate');
         socket.emit('signal', { roomId, signalData: { type: 'candidate', candidate: event.candidate } });
     }
 };
 
-// Initialize message input as disabled
-messageInput.disabled = true;
+peerConnection.oniceconnectionstatechange = () => {
+    log('ICE connection state: ' + peerConnection.iceConnectionState);
+};
 
-// Handle message sending
+messageInput.disabled = true;
+messageInput.placeholder = 'Connecting...';
+
 messageInput.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') {
         const message = messageInput.value.trim();
-        if (message && dataChannel) {
-            console.log('Data channel state:', dataChannel.readyState);
-            if (dataChannel.readyState === 'open') {
-                dataChannel.send(message);
-                appendMessage(`You: ${message}`);
-                messageInput.value = '';
-            } else {
-                appendMessage('System: Connection not ready. Please wait...');
-                console.log('Data channel not open. State:', dataChannel.readyState);
-            }
+        if (message && dataChannel?.readyState === 'open') {
+            dataChannel.send(message);
+            appendMessage(`You: ${message}`);
+            messageInput.value = '';
+            log('Message sent: ' + message);
+        } else {
+            log('Cannot send message. Channel state: ' + dataChannel?.readyState);
         }
-    }
-});
-
-// Add click event listener for mobile devices
-messageInput.addEventListener('click', () => {
-    if (messageInput.disabled) {
-        appendMessage('System: Still establishing connection...');
     }
 });
 
@@ -172,15 +214,3 @@ function appendMessage(message) {
     chat.appendChild(messageElement);
     chat.scrollTop = chat.scrollHeight;
 }
-
-// Connection state logging
-peerConnection.onconnectionstatechange = () => {
-    const state = peerConnection.connectionState;
-    console.log(`Connection state changed to: ${state}`);
-    appendMessage(`System: Connection state - ${state}`);
-};
-
-peerConnection.oniceconnectionstatechange = () => {
-    const state = peerConnection.iceConnectionState;
-    console.log(`ICE connection state changed to: ${state}`);
-};
