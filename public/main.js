@@ -3,8 +3,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const chat = document.getElementById('chat');
     const messageInput = document.getElementById('messageInput');
-    const roomInput = document.getElementById('roomInput');
-    const joinButton = document.getElementById('joinButton');
 
     let peerConnection;
     let dataChannel;
@@ -14,12 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     };
 
-    // Join a room when the button is clicked
-    joinButton.addEventListener('click', () => {
-        const room = roomInput.value || 'default-room';
-        console.log(`Joining room: ${room}`);
-        socket.emit('join-room', room);
-    });
+    // Automatically join the "default-room"
+    console.log('Joining the default room');
 
     // Handle signaling data from the server
     socket.on('signal', (data) => {
