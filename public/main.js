@@ -1,4 +1,3 @@
-// First add this debug version of main.js
 const socket = io({
     reconnection: true,
     reconnectionAttempts: 5,
@@ -6,7 +5,7 @@ const socket = io({
     transports: ['websocket', 'polling']
 });
 
-// Debug element for visible logging
+// Debug element
 const debugLog = document.createElement('div');
 debugLog.style.position = 'fixed';
 debugLog.style.top = '10px';
@@ -17,6 +16,7 @@ debugLog.style.padding = '10px';
 debugLog.style.borderRadius = '5px';
 debugLog.style.maxHeight = '200px';
 debugLog.style.overflow = 'auto';
+debugLog.style.zIndex = '1000';
 document.body.appendChild(debugLog);
 
 function log(message) {
@@ -29,61 +29,77 @@ function log(message) {
     }
 }
 
-// Test socket connection
-socket.on('connect', () => {
-    log('Socket connected! ID: ' + socket.id);
-});
-
-socket.on('connect_error', (error) => {
-    log('Socket connection error: ' + error);
-});
-
-socket.on('disconnect', (reason) => {
-    log('Socket disconnected: ' + reason);
-});
-
 const chat = document.getElementById('chat');
 const messageInput = document.getElementById('messageInput');
-
-// Log when elements are found/not found
-if (chat) {
-    log('Chat element found');
-} else {
-    log('Chat element NOT found');
-}
-
-if (messageInput) {
-    log('MessageInput element found');
-} else {
-    log('MessageInput element NOT found');
-}
 
 const configuration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
 
 let peerConnection;
-try {
-    peerConnection = new RTCPeerConnection(configuration);
-    log('RTCPeerConnection created successfully');
-} catch (error) {
-    log('Error creating RTCPeerConnection: ' + error);
+let dataChannel = null;
+let isInitiator = false;
+
+function createPeerConnection() {
+    try {
+        peerConnection = new RTCPeerConnection(configuration);
+        log('RTCPeerConnection created successfully');
+
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                log('Sending ICE candidate');
+                socket.emit('signal', {
+                    roomId,
+                    signalData: {
+                        type: 'candidate',
+                        candidate: event.candidate
+                    }
+                });
+            }
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            log('ICE connection state: ' + peerConnection.iceConnectionState);
+            if (peerConnection.iceConnectionState === 'connected') {
+                log('WebRTC connection established!');
+            }
+        };
+
+        peerConnection.ondatachannel = (event) => {
+            log('Received data channel');
+            dataChannel = event.channel;
+            setupDataChannelHandlers(dataChannel);
+        };
+
+    } catch (error) {
+        log('Error creating RTCPeerConnection: ' + error);
+    }
 }
 
-let dataChannel = null;
 const roomId = new URLSearchParams(window.location.search).get('room') || 'default-room';
 log('Room ID: ' + roomId);
+
+createPeerConnection();
 
 // Join room
 socket.emit('join', roomId);
 log('Joining room: ' + roomId);
 
+socket.on('connect', () => {
+    log('Socket connected! ID: ' + socket.id);
+});
+
 socket.on('role', (role) => {
     log('Received role: ' + role);
-    if (role === 'initiator') {
+    isInitiator = role === 'initiator';
+    
+    if (isInitiator) {
         createDataChannel();
         startCall();
     }
@@ -91,7 +107,9 @@ socket.on('role', (role) => {
 
 function createDataChannel() {
     try {
-        dataChannel = peerConnection.createDataChannel('chat');
+        dataChannel = peerConnection.createDataChannel('chat', {
+            ordered: true
+        });
         log('Data channel created');
         setupDataChannelHandlers(dataChannel);
     } catch (error) {
@@ -104,25 +122,25 @@ function setupDataChannelHandlers(channel) {
         log('Data channel opened');
         messageInput.disabled = false;
         messageInput.placeholder = 'Type a message...';
+        appendMessage('System: Connected! You can now send messages.');
     };
 
     channel.onclose = () => {
         log('Data channel closed');
         messageInput.disabled = true;
         messageInput.placeholder = 'Connection closed...';
+        appendMessage('System: Connection closed');
     };
 
     channel.onmessage = (event) => {
         log('Message received: ' + event.data);
         appendMessage(`Peer: ${event.data}`);
     };
-}
 
-peerConnection.ondatachannel = (event) => {
-    log('Received data channel');
-    dataChannel = event.channel;
-    setupDataChannelHandlers(dataChannel);
-};
+    channel.onerror = (error) => {
+        log('Data channel error: ' + error);
+    };
+}
 
 socket.on('signal', async (data) => {
     log('Signal received: ' + data.type);
@@ -131,7 +149,7 @@ socket.on('signal', async (data) => {
             await handleOffer(data.offer);
         } else if (data.type === 'answer') {
             await handleAnswer(data.answer);
-        } else if (data.type === 'candidate') {
+        } else if (data.type === 'candidate' && data.candidate) {
             await handleCandidate(data.candidate);
         }
     } catch (error) {
@@ -142,10 +160,13 @@ socket.on('signal', async (data) => {
 async function handleOffer(offer) {
     log('Handling offer');
     try {
-        await peerConnection.setRemoteDescription(offer);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        socket.emit('signal', { roomId, signalData: { type: 'answer', answer } });
+        socket.emit('signal', {
+            roomId,
+            signalData: { type: 'answer', answer }
+        });
     } catch (error) {
         log('Error handling offer: ' + error);
     }
@@ -154,7 +175,8 @@ async function handleOffer(offer) {
 async function handleAnswer(answer) {
     log('Handling answer');
     try {
-        await peerConnection.setRemoteDescription(answer);
+        const remoteDesc = new RTCSessionDescription(answer);
+        await peerConnection.setRemoteDescription(remoteDesc);
     } catch (error) {
         log('Error handling answer: ' + error);
     }
@@ -163,7 +185,11 @@ async function handleAnswer(answer) {
 async function handleCandidate(candidate) {
     log('Handling ICE candidate');
     try {
-        await peerConnection.addIceCandidate(candidate);
+        if (peerConnection.remoteDescription) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+            log('Delayed ICE candidate - no remote description');
+        }
     } catch (error) {
         log('Error handling candidate: ' + error);
     }
@@ -174,37 +200,36 @@ async function startCall() {
     try {
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        socket.emit('signal', { roomId, signalData: { type: 'offer', offer } });
+        socket.emit('signal', {
+            roomId,
+            signalData: { type: 'offer', offer }
+        });
     } catch (error) {
         log('Error starting call: ' + error);
     }
 }
 
-peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-        log('Sending ICE candidate');
-        socket.emit('signal', { roomId, signalData: { type: 'candidate', candidate: event.candidate } });
-    }
-};
-
-peerConnection.oniceconnectionstatechange = () => {
-    log('ICE connection state: ' + peerConnection.iceConnectionState);
-};
-
 messageInput.disabled = true;
 messageInput.placeholder = 'Connecting...';
 
+// Handle both Enter key and button click for messages
+function sendMessage() {
+    const message = messageInput.value.trim();
+    if (message && dataChannel?.readyState === 'open') {
+        dataChannel.send(message);
+        appendMessage(`You: ${message}`);
+        messageInput.value = '';
+        log('Message sent: ' + message);
+    } else {
+        const state = dataChannel ? dataChannel.readyState : 'no channel';
+        log('Cannot send message. Channel state: ' + state);
+        appendMessage('System: Connection not ready yet. Please wait...');
+    }
+}
+
 messageInput.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') {
-        const message = messageInput.value.trim();
-        if (message && dataChannel?.readyState === 'open') {
-            dataChannel.send(message);
-            appendMessage(`You: ${message}`);
-            messageInput.value = '';
-            log('Message sent: ' + message);
-        } else {
-            log('Cannot send message. Channel state: ' + dataChannel?.readyState);
-        }
+        sendMessage();
     }
 });
 
@@ -214,3 +239,13 @@ function appendMessage(message) {
     chat.appendChild(messageElement);
     chat.scrollTop = chat.scrollHeight;
 }
+
+// Add connection state debugging
+setInterval(() => {
+    if (peerConnection && dataChannel) {
+        log(`Connection Status:
+            ICE: ${peerConnection.iceConnectionState}
+            Signal: ${peerConnection.signalingState}
+            Data Channel: ${dataChannel.readyState}`);
+    }
+}, 5000);
