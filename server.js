@@ -4,7 +4,12 @@ const socketIo = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
 // Keep track of rooms and their peers
 const rooms = new Map();
@@ -26,17 +31,15 @@ io.on('connection', (socket) => {
         room.add(socket.id);
 
         // Assign roles based on join order
-        if (room.size === 1) {
-            socket.emit('role', 'initiator');
-        } else {
-            socket.emit('role', 'receiver');
-        }
-
-        console.log(`User ${socket.id} joined room ${roomId} (${room.size} peers)`);
+        const role = room.size === 1 ? 'initiator' : 'receiver';
+        socket.emit('role', role);
+        
+        console.log(`User ${socket.id} joined room ${roomId} as ${role} (${room.size} peers)`);
     });
 
     socket.on('signal', (data) => {
         const { roomId, signalData } = data;
+        console.log(`Relaying ${signalData.type} from ${socket.id} in room ${roomId}`);
         socket.to(roomId).emit('signal', signalData);
     });
 
@@ -48,6 +51,8 @@ io.on('connection', (socket) => {
                 if (peers.size === 0) {
                     rooms.delete(roomId);
                 }
+                // Notify remaining peers about disconnection
+                io.to(roomId).emit('peerDisconnected', socket.id);
             }
         }
         console.log('User disconnected:', socket.id);

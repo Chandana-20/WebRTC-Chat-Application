@@ -20,7 +20,10 @@ const roomId = new URLSearchParams(window.location.search).get('room') || 'defau
 socket.emit('join', roomId);
 socket.on('role', (role) => {
     isInitiator = role === 'initiator';
+    console.log('Role assigned:', role);
+    
     if (isInitiator) {
+        console.log('Creating data channel as initiator');
         createDataChannel();
         startCall();
     }
@@ -29,9 +32,9 @@ socket.on('role', (role) => {
 function createDataChannel() {
     try {
         dataChannel = peerConnection.createDataChannel('chat', {
-            ordered: true,
-            maxRetransmits: 3
+            ordered: true
         });
+        console.log('Data channel created:', dataChannel.label);
         setupDataChannelHandlers(dataChannel);
     } catch (error) {
         console.error('Error creating data channel:', error);
@@ -47,6 +50,7 @@ function setupDataChannelHandlers(channel) {
     };
 
     channel.onmessage = (event) => {
+        console.log('Message received:', event.data);
         appendMessage(`Peer: ${event.data}`);
     };
 
@@ -62,14 +66,16 @@ function setupDataChannelHandlers(channel) {
     };
 }
 
+// Handle incoming data channel for non-initiator
 peerConnection.ondatachannel = (event) => {
-    console.log('Received data channel');
+    console.log('Received data channel:', event.channel.label);
     dataChannel = event.channel;
     setupDataChannelHandlers(dataChannel);
 };
 
 socket.on('signal', async (data) => {
     try {
+        console.log('Signal received:', data.type);
         if (data.type === 'offer') {
             await handleOffer(data.offer);
         } else if (data.type === 'answer') {
@@ -84,6 +90,7 @@ socket.on('signal', async (data) => {
 
 async function handleOffer(offer) {
     try {
+        console.log('Handling offer');
         await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
@@ -95,6 +102,7 @@ async function handleOffer(offer) {
 
 async function handleAnswer(answer) {
     try {
+        console.log('Handling answer');
         await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
     } catch (error) {
         console.error('Error handling answer:', error);
@@ -104,6 +112,7 @@ async function handleAnswer(answer) {
 async function handleCandidate(candidate) {
     try {
         if (candidate) {
+            console.log('Adding ICE candidate');
             await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         }
     } catch (error) {
@@ -113,6 +122,7 @@ async function handleCandidate(candidate) {
 
 async function startCall() {
     try {
+        console.log('Starting call');
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
         socket.emit('signal', { roomId, signalData: { type: 'offer', offer } });
@@ -123,23 +133,36 @@ async function startCall() {
 
 peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
+        console.log('Sending ICE candidate');
         socket.emit('signal', { roomId, signalData: { type: 'candidate', candidate: event.candidate } });
     }
 };
 
-// Disable input initially
+// Initialize message input as disabled
 messageInput.disabled = true;
 
+// Handle message sending
 messageInput.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') {
         const message = messageInput.value.trim();
-        if (message && dataChannel && dataChannel.readyState === 'open') {
-            dataChannel.send(message);
-            appendMessage(`You: ${message}`);
-            messageInput.value = '';
-        } else if (!dataChannel || dataChannel.readyState !== 'open') {
-            appendMessage('System: Connection not established yet. Please wait...');
+        if (message && dataChannel) {
+            console.log('Data channel state:', dataChannel.readyState);
+            if (dataChannel.readyState === 'open') {
+                dataChannel.send(message);
+                appendMessage(`You: ${message}`);
+                messageInput.value = '';
+            } else {
+                appendMessage('System: Connection not ready. Please wait...');
+                console.log('Data channel not open. State:', dataChannel.readyState);
+            }
         }
+    }
+});
+
+// Add click event listener for mobile devices
+messageInput.addEventListener('click', () => {
+    if (messageInput.disabled) {
+        appendMessage('System: Still establishing connection...');
     }
 });
 
@@ -152,10 +175,12 @@ function appendMessage(message) {
 
 // Connection state logging
 peerConnection.onconnectionstatechange = () => {
-    console.log(`Connection state: ${peerConnection.connectionState}`);
-    appendMessage(`System: Connection state - ${peerConnection.connectionState}`);
+    const state = peerConnection.connectionState;
+    console.log(`Connection state changed to: ${state}`);
+    appendMessage(`System: Connection state - ${state}`);
 };
 
 peerConnection.oniceconnectionstatechange = () => {
-    console.log(`ICE connection state: ${peerConnection.iceConnectionState}`);
+    const state = peerConnection.iceConnectionState;
+    console.log(`ICE connection state changed to: ${state}`);
 };
